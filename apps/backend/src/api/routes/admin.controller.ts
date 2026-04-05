@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { ApiTags } from '@nestjs/swagger';
+import { timingSafeEqual } from 'crypto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -29,7 +30,11 @@ export class AdminController {
     }
 
     const token = authHeader?.replace(/^Bearer\s+/i, '');
-    if (!token || token !== expectedSecret) {
+    if (
+      !token ||
+      token.length !== expectedSecret.length ||
+      !timingSafeEqual(Buffer.from(token), Buffer.from(expectedSecret))
+    ) {
       throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
     }
 
