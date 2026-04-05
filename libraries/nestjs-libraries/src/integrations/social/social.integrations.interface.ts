@@ -67,6 +67,7 @@ export type AuthTokenDetails = {
   id: string;
   name: string;
   error?: string;
+  warning?: string; // Non-blocking warning, e.g. when optional scopes are missing
   accessToken: string; // The obtained access token
   refreshToken?: string; // The refresh token, if applicable
   expiresIn?: number; // The duration in seconds for which the access token is valid

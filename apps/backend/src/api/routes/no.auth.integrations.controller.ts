@@ -95,6 +95,7 @@ export class NoAuthIntegrationsController {
 
     const {
       error,
+      warning,
       accessToken,
       expiresIn,
       refreshToken,
@@ -301,6 +302,7 @@ export class NoAuthIntegrationsController {
       ...createUpdate,
       onboarding: onboarding === 'true',
       pages,
+      ...(warning ? { warning } : {}),
       ...(returnURL ? { returnURL } : {}),
       ...(extensionToken ? { extensionToken } : {}),
     };

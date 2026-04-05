@@ -16,13 +16,27 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
   identifier = 'facebook';
   name = 'Facebook Page';
   isBetweenSteps = true;
+
+  /** Scopes requested during OAuth — all are requested so the user can grant
+   *  as many as possible.  Only `requiredScopes` are enforced at validation. */
   scopes = [
     'pages_show_list',
-    'business_management',
     'pages_manage_posts',
     'pages_manage_engagement',
     'pages_read_engagement',
     'read_insights',
+    'business_management',
+  ];
+
+  /** Scopes that MUST be granted for the provider to function. */
+  readonly requiredScopes = ['pages_show_list', 'pages_manage_posts'];
+
+  /** Scopes that enable extra features but are not required for basic posting. */
+  readonly optionalScopes = [
+    'pages_manage_engagement',
+    'pages_read_engagement',
+    'read_insights',
+    'business_management',
   ];
   override maxConcurrentJob = 100; // Facebook has reasonable rate limits
   editor = 'normal' as const;
@@ -242,13 +256,24 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
     const permissions = data
       .filter((d: any) => d.status === 'granted')
       .map((p: any) => p.permission);
-    this.checkScopes(this.scopes, permissions);
+    const { missingOptional } = this.checkScopesWithOptional(
+      this.requiredScopes,
+      this.optionalScopes,
+      permissions,
+      'Missing required Facebook posting permissions (pages_show_list, pages_manage_posts).'
+    );
 
     const { id, name, picture } = await (
       await fetch(
         `https://graph.facebook.com/v20.0/me?fields=id,name,picture&access_token=${access_token}`
       )
     ).json();
+
+    const warning =
+      missingOptional.length > 0
+        ? `Some optional Facebook permissions are missing (${missingOptional.join(', ')}). ` +
+          `Features like engagement management, insights, and business management may be unavailable.`
+        : undefined;
 
     return {
       id,
@@ -258,6 +283,7 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       expiresIn: dayjs().add(59, 'days').unix() - dayjs().unix(),
       picture: picture?.data?.url || '',
       username: '',
+      ...(warning ? { warning } : {}),
     };
   }
 
@@ -640,5 +666,143 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       console.error('Error fetching Facebook post analytics:', err);
       return [];
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Business Manager endpoints
+  // -------------------------------------------------------------------------
+
+  async listBusinesses(
+    accessToken: string
+  ): Promise<{ id: string; name: string }[]> {
+    const businesses: { id: string; name: string }[] = [];
+    let url: string | undefined =
+      `https://graph.facebook.com/v20.0/me/businesses?fields=id,name&access_token=${accessToken}`;
+
+    while (url) {
+      const response = await (
+        await this.fetch(url, {}, 'list businesses')
+      ).json();
+      if (response.error) {
+        throw new Error(response.error.message || 'Failed to list businesses');
+      }
+      if (response.data) {
+        for (const biz of response.data) {
+          businesses.push({ id: biz.id, name: biz.name });
+        }
+      }
+      url = response.paging?.next;
+    }
+
+    return businesses;
+  }
+
+  async inviteMember(
+    accessToken: string,
+    data: { businessId: string; email: string; role: string }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.businessId}/business_users?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: data.email,
+            role: data.role || 'EMPLOYEE',
+          }),
+        },
+        'invite member'
+      )
+    ).json();
+
+    return { success: !!response.id };
+  }
+
+  async assignAsset(
+    accessToken: string,
+    data: {
+      businessId: string;
+      userId: string;
+      assetId: string;
+      tasks: string[];
+    }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetId}/assigned_users?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: data.userId,
+            tasks: data.tasks || ['MANAGE'],
+            business: data.businessId,
+          }),
+        },
+        'assign asset'
+      )
+    ).json();
+
+    return { success: response.success !== false };
+  }
+
+  async assignAssetGroup(
+    accessToken: string,
+    data: {
+      businessId: string;
+      assetGroupId: string;
+      assetId: string;
+      assetType: string;
+    }
+  ): Promise<{ success: boolean }> {
+    const endpointMap: Record<string, string> = {
+      page: 'pages',
+      ad_account: 'adaccounts',
+    };
+    const endpoint = endpointMap[data.assetType];
+    if (!endpoint) {
+      throw new Error(
+        `Unsupported asset type "${data.assetType}". Expected "page" or "ad_account".`
+      );
+    }
+
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetGroupId}/${endpoint}?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            asset_id: data.assetId,
+            business: data.businessId,
+          }),
+        },
+        'assign asset group'
+      )
+    ).json();
+
+    return { success: response.success !== false };
+  }
+
+  async removeAccess(
+    accessToken: string,
+    data: { businessId: string; userId: string; assetId: string }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetId}/assigned_users/${data.userId}?access_token=${accessToken}`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business: data.businessId,
+          }),
+        },
+        'remove access'
+      )
+    ).json();
+
+    return { success: response.success !== false };
   }
 }

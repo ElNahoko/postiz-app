@@ -190,4 +190,31 @@ export abstract class SocialAbstract {
 
     return true;
   }
+
+  checkScopesWithOptional(
+    required: string[],
+    optional: string[],
+    got: string | string[],
+    requiredErrorMessage?: string
+  ): { missingOptional: string[] } {
+    let gotArray: string[];
+    if (Array.isArray(got)) {
+      gotArray = got;
+    } else {
+      const newGot = decodeURIComponent(got);
+      const splitType = newGot.indexOf(',') > -1 ? ',' : ' ';
+      gotArray = newGot.split(splitType);
+    }
+
+    const missingRequired = required.filter((scope) => !gotArray.includes(scope));
+    if (missingRequired.length > 0) {
+      throw new NotEnoughScopes(
+        requiredErrorMessage ||
+          `Not enough scopes, when choosing a provider, please add all the scopes`
+      );
+    }
+
+    const missingOptional = optional.filter((scope) => !gotArray.includes(scope));
+    return { missingOptional };
+  }
 }
