@@ -667,4 +667,142 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       return [];
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Business Manager endpoints
+  // -------------------------------------------------------------------------
+
+  async listBusinesses(
+    accessToken: string
+  ): Promise<{ id: string; name: string }[]> {
+    const businesses: { id: string; name: string }[] = [];
+    let url: string | undefined =
+      `https://graph.facebook.com/v20.0/me/businesses?fields=id,name&access_token=${accessToken}`;
+
+    while (url) {
+      const response = await (
+        await this.fetch(url, {}, 'list businesses')
+      ).json();
+      if (response.error) {
+        throw new Error(response.error.message || 'Failed to list businesses');
+      }
+      if (response.data) {
+        for (const biz of response.data) {
+          businesses.push({ id: biz.id, name: biz.name });
+        }
+      }
+      url = response.paging?.next;
+    }
+
+    return businesses;
+  }
+
+  async inviteMember(
+    accessToken: string,
+    data: { businessId: string; email: string; role: string }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.businessId}/business_users?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: data.email,
+            role: data.role || 'EMPLOYEE',
+          }),
+        },
+        'invite member'
+      )
+    ).json();
+
+    return { success: !!response.id };
+  }
+
+  async assignAsset(
+    accessToken: string,
+    data: {
+      businessId: string;
+      userId: string;
+      assetId: string;
+      tasks: string[];
+    }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetId}/assigned_users?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: data.userId,
+            tasks: data.tasks || ['MANAGE'],
+            business: data.businessId,
+          }),
+        },
+        'assign asset'
+      )
+    ).json();
+
+    return { success: response.success !== false };
+  }
+
+  async assignAssetGroup(
+    accessToken: string,
+    data: {
+      businessId: string;
+      assetGroupId: string;
+      assetId: string;
+      assetType: string;
+    }
+  ): Promise<{ success: boolean }> {
+    const endpointMap: Record<string, string> = {
+      page: 'pages',
+      ad_account: 'adaccounts',
+    };
+    const endpoint = endpointMap[data.assetType];
+    if (!endpoint) {
+      throw new Error(
+        `Unsupported asset type "${data.assetType}". Expected "page" or "ad_account".`
+      );
+    }
+
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetGroupId}/${endpoint}?access_token=${accessToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            asset_id: data.assetId,
+            business: data.businessId,
+          }),
+        },
+        'assign asset group'
+      )
+    ).json();
+
+    return { success: response.success !== false };
+  }
+
+  async removeAccess(
+    accessToken: string,
+    data: { businessId: string; userId: string; assetId: string }
+  ): Promise<{ success: boolean }> {
+    const response = await (
+      await this.fetch(
+        `https://graph.facebook.com/v20.0/${data.assetId}/assigned_users/${data.userId}?access_token=${accessToken}`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business: data.businessId,
+          }),
+        },
+        'remove access'
+      )
+    ).json();
+
+    return { success: response.success !== false };
+  }
 }
